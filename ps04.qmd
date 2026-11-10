@@ -1,0 +1,456 @@
+---
+title: "STATS 506 - Problem Set 4"
+author: "Jiahao Li"
+format:
+  html:
+    embed-resources: true
+editor: source
+---
+
+GitHub Repository: [https://github.com/epter-png/data506-ps04](https://github.com/epter-png/data506-ps04)
+
+```{r}
+#| label: setup
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(knitr)
+```
+
+## Problem 1 - Tidyverse: New Zealand
+
+### Data preparation
+
+```{r}
+if (!file.exists("nzge.rds")) {
+  download.file(
+    "https://phuongov.github.io/stats506-f26/data_f26/nzge.rds",
+    destfile = "nzge.rds",
+    mode = "wb"
+  )
+}
+
+nzge <- readRDS("nzge.rds")
+
+glimpse(nzge)
+```
+
+### (a) Total votes by year and vote type
+
+```{r}
+vote_totals <- nzge |>
+  group_by(election_year, voting_type) |>
+  summarise(total_votes = sum(votes), .groups = "drop") |>
+  arrange(desc(total_votes))
+
+kable(
+  vote_totals |> mutate(election_year = as.character(election_year)),
+  col.names = c("Year", "Vote type", "Total votes"),
+  format.args = list(big.mark = ","),
+  row.names = FALSE
+)
+```
+Total votes were highest in 2014, with 2,416,479 Party votes and 2,375,493 Candidate votes. Party votes exceeded Candidate votes in all five election years.
+
+### (b) Candidate vote shares in 2014
+
+```{r}
+candidate_2014 <- nzge |>
+  filter(election_year == 2014, voting_type == "Candidate") |>
+  group_by(party) |>
+  summarise(total_votes = sum(votes), .groups = "drop") |>
+  mutate(vote_percent = 100 * total_votes / sum(total_votes)) |>
+  arrange(desc(vote_percent))
+
+kable(
+  candidate_2014,
+  col.names = c("Party", "Candidate votes", "Vote share (%)"),
+  digits = 2,
+  format.args = list(big.mark = ","),
+  row.names = FALSE
+)
+```
+The National Party received the largest share of Candidate votes in 2014 (45.54%), followed by the Labour Party (33.73%) and the Green Party (6.98%). These percentages include informal Candidate votes in the total.
+
+### (c) Winning parties by year and vote type
+
+```{r}
+winning_parties <- nzge |>
+  group_by(election_year, voting_type, party) |>
+  summarise(total_votes = sum(votes), .groups = "drop") |>
+  group_by(election_year, voting_type) |>
+  slice_max(total_votes, n = 1, with_ties = TRUE) |>
+  summarise(winner = paste(party, collapse = ", "), .groups = "drop") |>
+  pivot_wider(names_from = voting_type, values_from = winner) |>
+  arrange(election_year) |>
+  select(election_year, Candidate, Party)
+
+kable(
+  winning_parties,
+  col.names = c("Year", "Candidate vote winner", "Party vote winner"),
+  row.names = FALSE
+)
+```
+Labour won both vote types in 2002, while National won both in 2008, 2011, and 2014. The winners differed only in 2005, when National led the Candidate vote and Labour led the Party vote.
+
+## Problem 2 - Tidyverse: Tennis
+
+### Data preparation
+
+```{r}
+if (!file.exists("atp_matches_2019.csv")) {
+  download.file(
+    "https://raw.githubusercontent.com/azhou5849/tennis-atp-sackmann-data/master/atp_matches_2019.csv",
+    destfile = "atp_matches_2019.csv",
+    mode = "wb"
+  )
+}
+
+tennis <- read_csv(
+  "atp_matches_2019.csv",
+  show_col_types = FALSE
+)
+
+glimpse(tennis)
+```
+
+### (a) Number of tournaments in 2019
+
+```{r}
+tournament_count <- tennis |>
+  summarise(tournaments = n_distinct(tourney_id))
+
+kable(
+  tournament_count,
+  col.names = "Number of tournaments",
+  row.names = FALSE
+)
+```
+The dataset contains 128 distinct tournament IDs in 2019, including team-event records.
+
+### (b) Players with multiple tournament titles
+
+```{r}
+title_counts <- tennis |>
+  filter(round == "F") |>
+  distinct(tourney_id, winner_id, winner_name) |>
+  count(winner_id, winner_name, name = "titles") |>
+  arrange(desc(titles), winner_name)
+
+multiple_winners <- title_counts |>
+  filter(titles > 1)
+
+kable(
+  multiple_winners |> select(winner_name, titles),
+  col.names = c("Player", "Tournament titles"),
+  row.names = FALSE
+)
+
+title_summary <- title_counts |>
+  summarise(
+    multiple_title_winners = sum(titles > 1),
+    most_titles = max(titles)
+  )
+
+kable(
+  title_summary,
+  col.names = c("Players with multiple titles", "Most titles"),
+  row.names = FALSE
+)
+```
+Twelve players won more than one tournament in 2019. Dominic Thiem and Novak Djokovic tied for the most titles, with five each.
+
+### (c) Aces among winners and losers
+
+```{r}
+ace_pairs <- tennis |>
+  select(w_ace, l_ace) |>
+  drop_na(w_ace, l_ace) |>
+  mutate(ace_difference = w_ace - l_ace)
+
+ace_summary <- ace_pairs |>
+  summarise(
+    matches = n(),
+    winner_mean = mean(w_ace),
+    loser_mean = mean(l_ace),
+    mean_difference = mean(ace_difference),
+    winner_more_percent = 100 * mean(ace_difference > 0),
+    tied_percent = 100 * mean(ace_difference == 0)
+  )
+
+kable(
+  ace_summary,
+  col.names = c(
+    "Matches", "Winner mean", "Loser mean",
+    "Mean difference", "Winner more (%)", "Tied (%)"
+  ),
+  digits = 2,
+  row.names = FALSE
+)
+```
+Among the 2,694 matches with complete ace records, winners averaged 7.50 aces compared with 5.79 for losers, with a mean paired difference of 1.70. Winners had more aces in 57.28% of matches. This suggests an association between more aces and winning, but does not establish causation.
+
+### (d) Highest win rate
+
+```{r}
+player_results <- bind_rows(
+  tennis |>
+    transmute(player_id = winner_id, player = winner_name, won = 1L),
+  tennis |>
+    transmute(player_id = loser_id, player = loser_name, won = 0L)
+)
+
+player_rates <- player_results |>
+  group_by(player_id, player) |>
+  summarise(
+    matches = n(),
+    wins = sum(won),
+    .groups = "drop"
+  ) |>
+  filter(matches >= 5) |>
+  mutate(win_rate = wins / matches)
+
+top_players <- player_rates |>
+  slice_max(win_rate, n = 1, with_ties = TRUE) |>
+  mutate(win_percent = 100 * win_rate)
+
+kable(
+  top_players |> select(player, matches, wins, win_percent),
+  col.names = c("Player", "Matches", "Wins", "Win rate (%)"),
+  digits = 2,
+  row.names = FALSE
+)
+```
+Among players with at least five matches, Rafael Nadal had the highest win rate at 86.96%, winning 60 of his 69 matches.
+
+## Problem 3 - Visualization
+
+### Data preparation
+
+```{r}
+if (!file.exists("us-states.csv")) {
+  download.file(
+    "https://raw.githubusercontent.com/nytimes/covid-19-data/refs/heads/master/rolling-averages/us-states.csv",
+    destfile = "us-states.csv",
+    mode = "wb"
+  )
+}
+
+covid <- read_csv(
+  "us-states.csv",
+  show_col_types = FALSE
+)
+
+glimpse(covid)
+
+covid |>
+  summarise(
+    first_date = min(date),
+    last_date = max(date),
+    locations = n_distinct(state)
+  ) |>
+  kable(
+    col.names = c("First date", "Last date", "Locations"),
+    row.names = FALSE
+  )
+```
+The analysis includes the 50 U.S. states and excludes the District of Columbia and U.S. territories.
+
+### (a) Major and minor spikes in cases
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+
+covid_states <- covid |>
+  filter(state %in% state.name)
+
+national_cases <- covid_states |>
+  group_by(date) |>
+  summarise(
+    daily_cases_avg = sum(cases_avg, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  arrange(date)
+
+ggplot(national_cases, aes(x = date, y = daily_cases_avg)) +
+  geom_line(color = "#2166AC", linewidth = 0.7) +
+  geom_hline(
+    yintercept = 150000,
+    linetype = "dashed",
+    color = "#666666",
+    linewidth = 0.4
+  ) +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%Y-%m"
+  ) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  labs(
+    title = "COVID-19 case waves across the 50 U.S. states",
+    subtitle = "Combined 7-day average; dashed line marks 150,000 cases per day",
+    x = NULL,
+    y = "Daily new cases (7-day average)",
+    caption = "Source: The New York Times. January 2020–March 2023."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold"),
+    plot.caption = element_text(hjust = 0)
+  )
+```
+
+I identify approximately eight broad waves, grouping nearby fluctuations within the same wave. Using 150,000 daily cases as the cutoff, three waves are major: winter 2020–21, late summer 2021, and winter 2021–22. The other five are minor, and the largest peak occurs in January 2022 at roughly 800,000 daily cases.
+
+### (b) States with the highest and lowest overall case rates
+
+I compare overall case rates using the sum of daily 7-day average cases per 100,000 residents, an approximation of cumulative reported cases per 100,000.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+
+state_rates <- covid_states |>
+  group_by(state) |>
+  summarise(
+    overall_rate = sum(cases_avg_per_100k, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+extreme_states <- bind_rows(
+  state_rates |>
+    slice_max(overall_rate, n = 1, with_ties = TRUE) |>
+    mutate(category = "Highest"),
+  state_rates |>
+    slice_min(overall_rate, n = 1, with_ties = TRUE) |>
+    mutate(category = "Lowest")
+)
+
+kable(
+  extreme_states |> select(category, state, overall_rate),
+  col.names = c(
+    "Overall rate", "State", "Approximate cumulative cases per 100,000"
+  ),
+  digits = 1,
+  format.args = list(big.mark = ","),
+  row.names = FALSE
+)
+
+comparison_data <- covid_states |>
+  inner_join(extreme_states, by = "state") |>
+  mutate(series = paste0(state, " (", tolower(category), ")"))
+
+ggplot(
+  comparison_data,
+  aes(x = date, y = cases_avg_per_100k, color = series)
+) +
+  geom_line(linewidth = 0.7) +
+  scale_color_manual(values = c("#2166AC", "#D55E00")) +
+  scale_x_date(
+    date_breaks = "6 months",
+    date_labels = "%Y-%m"
+  ) +
+  scale_y_continuous(labels = scales::label_comma()) +
+  labs(
+    title = "COVID-19 trajectories in states with contrasting case rates",
+    subtitle = "States selected by approximate cumulative cases per 100,000",
+    x = NULL,
+    y = "Daily cases per 100,000 (7-day average)",
+    color = NULL,
+    caption = "Source: The New York Times. January 2020–March 2023."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "top",
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold"),
+    plot.caption = element_text(hjust = 0)
+  )
+```
+Rhode Island had the highest approximate cumulative case rate (43,295.5 per 100,000), nearly twice Maine’s lowest rate (22,020.2). Rhode Island experienced much larger peaks in winter 2020–21 and early 2022, while their trajectories became more similar from mid-2022 onward. These patterns reflect reported cases and may also be affected by differences in testing and reporting.
+
+### (c) States affected earliest
+
+I define a substantial outbreak as the first day when the 7-day average reaches one daily reported case per 100,000 residents.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 6
+
+first_crossings <- covid_states |>
+  filter(cases_avg_per_100k >= 1) |>
+  group_by(state) |>
+  summarise(
+    first_date = min(date),
+    .groups = "drop"
+  ) |>
+  arrange(first_date, state)
+
+earliest_states <- first_crossings |>
+  slice_min(first_date, n = 5, with_ties = TRUE)
+
+kable(
+  earliest_states,
+  col.names = c("State", "First date reaching the threshold"),
+  row.names = FALSE
+)
+
+early_trajectories <- covid_states |>
+  semi_join(earliest_states, by = "state") |>
+  filter(
+    date >= as.Date("2020-02-15"),
+    date <= as.Date("2020-04-15")
+  )
+
+ggplot(
+  early_trajectories,
+  aes(x = date, y = cases_avg_per_100k)
+) +
+  geom_line(color = "#2166AC", linewidth = 0.7) +
+  geom_hline(
+    yintercept = 1,
+    linetype = "dashed",
+    color = "#666666",
+    linewidth = 0.4
+  ) +
+  geom_point(
+    data = earliest_states,
+    aes(x = first_date, y = 1),
+    inherit.aes = FALSE,
+    color = "#D55E00",
+    size = 2
+  ) +
+  facet_wrap(vars(state), ncol = 2) +
+  scale_x_date(
+    date_breaks = "1 month",
+    date_labels = "%Y-%m"
+  ) +
+  scale_y_continuous(
+    trans = scales::transform_log1p(),
+    breaks = c(0, 1, 5, 10, 25, 50)
+  ) +
+  labs(
+    title = "States reaching an early COVID-19 outbreak threshold",
+    subtitle = "Dashed line: 1 daily case per 100,000; points mark first crossing",
+    x = NULL,
+    y = "Daily cases per 100,000 (7-day average; log1p scale)",
+    caption = "Source: The New York Times. All panels use the same scale."
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(face = "bold"),
+    plot.caption = element_text(hjust = 0)
+  )
+```
+Using the threshold of one daily case per 100,000 residents, Washington crossed first on March 15, followed by New York on March 18 and Louisiana and New Jersey on March 19. Michigan and Vermont tied for fifth on March 21, so six states are shown. This ordering depends on the chosen threshold and reported case data.
+
+## Sources and assistance
+
+- Assignment and New Zealand election data: [STATS 506 Homework 4](https://phuongov.github.io/stats506-f26/Homework%204/hw04.html).
+- Tennis data: Jeff Sackmann, [ATP match data](https://github.com/azhou5849/tennis-atp-sackmann-data).
+- COVID-19 data: The New York Times, [COVID-19 data repository](https://github.com/nytimes/covid-19-data).
+- OpenAI Codex assisted with debugging R code, and provides ideas in times of difficulty.
